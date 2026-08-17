@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 5000;
 // Remplacez app.use(cors()); par :
 app.use(cors({
   origin: [ 
-    'https://shooting-manager-frontend-txze-alpha.vercel.app' 
+    'https://shooting-manager-frontend.vercel.app/' 
   ],
   credentials: true
 }));
