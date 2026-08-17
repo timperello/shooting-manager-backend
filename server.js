@@ -28,7 +28,7 @@ const pool = new Pool({
 // ==================== ROUTES ====================
 
 // ✅ GET - Tous les shootings
-app.get('/api/shootings', async (req, res) => {
+app.get('/shootings', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT 
