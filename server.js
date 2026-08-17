@@ -19,9 +19,7 @@ app.use(express.json());
 
 // Pool de connexion PostgreSQL (Supabase)
 const connectionString = 
-  process.env.POSTGRES_URL || 
-  process.env.POSTGRES_PRISMA_URL || 
-  process.env.DATABASE_URL;
+  process.env.POSTGRES_URL
 
 if (!connectionString) {
   console.error("❌ ERREUR: Aucune variable d'environnement de connexion PostgreSQL trouvée !");
