@@ -18,8 +18,17 @@ app.use(cors({
 app.use(express.json());
 
 // Pool de connexion PostgreSQL (Supabase)
+const connectionString = 
+  process.env.POSTGRES_URL || 
+  process.env.POSTGRES_PRISMA_URL || 
+  process.env.DATABASE_URL;
+
+if (!connectionString) {
+  console.error("❌ ERREUR: Aucune variable d'environnement de connexion PostgreSQL trouvée !");
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
+  connectionString: connectionString,
   ssl: {
     rejectUnauthorized: false // Requis par Supabase en production
   }
@@ -28,7 +37,7 @@ const pool = new Pool({
 // ==================== ROUTES ====================
 
 // ✅ GET - Tous les shootings
-app.get('/shootings', async (req, res) => {
+app.get('/api/shootings', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT 
