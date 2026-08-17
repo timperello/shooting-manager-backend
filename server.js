@@ -2,7 +2,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -11,15 +11,12 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Pool de connexion MySQL
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+// Pool de connexion PostgreSQL (Supabase)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
+  ssl: {
+    rejectUnauthorized: false // Requis par Supabase en production
+  }
 });
 
 // ==================== ROUTES ====================
@@ -27,8 +24,7 @@ const pool = mysql.createPool({
 // ✅ GET - Tous les shootings
 app.get('/api/shootings', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    const [shootings] = await connection.query(`
+    const { rows } = await pool.query(`
       SELECT 
         s.id,
         s.nom,
@@ -46,8 +42,7 @@ app.get('/api/shootings', async (req, res) => {
       LEFT JOIN shooting_types t ON s.type_id = t.id
       ORDER BY s.date DESC
     `);
-    connection.release();
-    res.json(shootings);
+    res.json(rows);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -57,12 +52,10 @@ app.get('/api/shootings', async (req, res) => {
 // ✅ GET - Tous les types
 app.get('/api/types', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    const [types] = await connection.query(
+    const { rows } = await pool.query(
       'SELECT id, nom, couleur FROM shooting_types ORDER BY nom'
     );
-    connection.release();
-    res.json(types);
+    res.json(rows);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -78,20 +71,14 @@ app.post('/api/types', async (req, res) => {
   }
 
   try {
-    const connection = await pool.getConnection();
-    const [result] = await connection.query(
-      'INSERT INTO shooting_types (nom, couleur) VALUES (?, ?)',
+    const { rows } = await pool.query(
+      'INSERT INTO shooting_types (nom, couleur) VALUES ($1, $2) RETURNING *',
       [nom, couleur]
     );
-    connection.release();
     
-    res.status(201).json({
-      id: result.insertId,
-      nom,
-      couleur
-    });
+    res.status(201).json(rows[0]);
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') { // Code d'erreur contrainte unique sous PostgreSQL
       return res.status(400).json({ error: 'Ce type existe déjà' });
     }
     console.error(error);
@@ -102,16 +89,14 @@ app.post('/api/types', async (req, res) => {
 // ✅ GET - Un shooting spécifique
 app.get('/api/shootings/:id', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    const [shootings] = await connection.query(
-      'SELECT * FROM shootings WHERE id = ?',
+    const { rows } = await pool.query(
+      'SELECT * FROM shootings WHERE id = $1',
       [req.params.id]
     );
-    connection.release();
-    if (shootings.length === 0) {
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'Shooting non trouvé' });
     }
-    res.json(shootings[0]);
+    res.json(rows[0]);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -127,8 +112,6 @@ app.post('/api/shootings', async (req, res) => {
   }
 
   try {
-    const connection = await pool.getConnection();
-    
     const TAX_RATE = 0.967;
     const pct = pourcentage_agence || 15;
     let montant_final = parseFloat(montant);
@@ -139,12 +122,14 @@ app.post('/api/shootings', async (req, res) => {
       montant_final = apresImpots - fraisAgence;
     }
 
-    const [result] = await connection.query(
-      'INSERT INTO shootings (nom, date, montant, categorie, pourcentage_agence, montant_final, type_id, notes, paye) VALUES (?, ?, ?, ?, ?, ?, ?, ?, false)',
+    const insertResult = await pool.query(
+      'INSERT INTO shootings (nom, date, montant, categorie, pourcentage_agence, montant_final, type_id, notes, paye) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false) RETURNING id',
       [nom, date, montant, categorie || 'agence', pct, montant_final, type_id, notes || '']
     );
     
-    const [newShooting] = await connection.query(`
+    const newId = insertResult.rows[0].id;
+
+    const { rows: newShooting } = await pool.query(`
       SELECT 
         s.id,
         s.nom,
@@ -160,11 +145,9 @@ app.post('/api/shootings', async (req, res) => {
         t.couleur as type_couleur
       FROM shootings s
       LEFT JOIN shooting_types t ON s.type_id = t.id
-      WHERE s.id = ?
-    `, [result.insertId]);
+      WHERE s.id = $1
+    `, [newId]);
 
-    connection.release();
-    
     res.status(201).json(newShooting[0]);
   } catch (error) {
     console.error(error);
@@ -177,8 +160,6 @@ app.put('/api/shootings/:id', async (req, res) => {
   const { nom, date, montant, categorie, pourcentage_agence, type_id, notes, paye } = req.body;
 
   try {
-    const connection = await pool.getConnection();
-    
     const TAX_RATE = 0.967;
     const pct = pourcentage_agence || 15;
     let montant_final = parseFloat(montant);
@@ -189,12 +170,12 @@ app.put('/api/shootings/:id', async (req, res) => {
       montant_final = apresImpots - fraisAgence;
     }
 
-    await connection.query(
-      'UPDATE shootings SET nom = ?, date = ?, montant = ?, categorie = ?, pourcentage_agence = ?, montant_final = ?, type_id = ?, notes = ?, paye = ? WHERE id = ?',
+    await pool.query(
+      'UPDATE shootings SET nom = $1, date = $2, montant = $3, categorie = $4, pourcentage_agence = $5, montant_final = $6, type_id = $7, notes = $8, paye = $9 WHERE id = $10',
       [nom, date, montant, categorie, pct, montant_final, type_id, notes || '', paye || false, req.params.id]
     );
     
-    const [updatedShooting] = await connection.query(`
+    const { rows: updatedShooting } = await pool.query(`
       SELECT 
         s.id,
         s.nom,
@@ -210,11 +191,9 @@ app.put('/api/shootings/:id', async (req, res) => {
         t.couleur as type_couleur
       FROM shootings s
       LEFT JOIN shooting_types t ON s.type_id = t.id
-      WHERE s.id = ?
+      WHERE s.id = $1
     `, [req.params.id]);
 
-    connection.release();
-    
     res.json(updatedShooting[0]);
   } catch (error) {
     console.error(error);
@@ -225,9 +204,7 @@ app.put('/api/shootings/:id', async (req, res) => {
 // ✅ DELETE - Supprimer un shooting
 app.delete('/api/shootings/:id', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    await connection.query('DELETE FROM shootings WHERE id = ?', [req.params.id]);
-    connection.release();
+    await pool.query('DELETE FROM shootings WHERE id = $1', [req.params.id]);
     res.json({ message: 'Shooting supprimé' });
   } catch (error) {
     console.error(error);
@@ -240,42 +217,38 @@ app.delete('/api/shootings/:id', async (req, res) => {
 // ✅ GET - Stats du mois courant
 app.get('/api/stats/current-month', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    
     // Montant reçu ce mois (payés)
-    const [receivedMonth] = await connection.query(`
+    const { rows: receivedMonth } = await pool.query(`
       SELECT COALESCE(SUM(montant_final), 0) as montant
       FROM shootings
       WHERE paye = true
-      AND MONTH(date) = MONTH(CURDATE())
-      AND YEAR(date) = YEAR(CURDATE())
+      AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
+      AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)
     `);
 
     // Montant généré ce mois (payés + impayés)
-    const [generatedMonth] = await connection.query(`
+    const { rows: generatedMonth } = await pool.query(`
       SELECT COALESCE(SUM(montant_final), 0) as montant
       FROM shootings
-      WHERE MONTH(date) = MONTH(CURDATE())
-      AND YEAR(date) = YEAR(CURDATE())
+      WHERE EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
+      AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)
     `);
 
     // Montant impayé TOTAL (tous les mois)
-    const [unpaidTotal] = await connection.query(`
+    const { rows: unpaidTotal } = await pool.query(`
       SELECT COALESCE(SUM(montant_final), 0) as montant
       FROM shootings
       WHERE paye = false
     `);
 
     // Nombre de shoots
-    const [counts] = await connection.query(`
+    const { rows: counts } = await pool.query(`
       SELECT 
-        COUNT(CASE WHEN paye = true AND MONTH(date) = MONTH(CURDATE()) AND YEAR(date) = YEAR(CURDATE()) THEN 1 END) as shoots_payes,
+        COUNT(CASE WHEN paye = true AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE) THEN 1 END) as shoots_payes,
         COUNT(CASE WHEN paye = false THEN 1 END) as shoots_impaye,
-        COUNT(CASE WHEN MONTH(date) = MONTH(CURDATE()) AND YEAR(date) = YEAR(CURDATE()) THEN 1 END) as nombre_shoots
+        COUNT(CASE WHEN EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE) THEN 1 END) as nombre_shoots
       FROM shootings
     `);
-
-    connection.release();
 
     res.json({
       montant_recu: receivedMonth[0].montant,
@@ -294,21 +267,18 @@ app.get('/api/stats/current-month', async (req, res) => {
 // ✅ GET - Revenu par catégorie (ce mois)
 app.get('/api/stats/by-category', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-
-    const [stats] = await connection.query(`
+    const { rows } = await pool.query(`
       SELECT 
         categorie,
         COUNT(*) as nombre,
         SUM(montant_final) as total
       FROM shootings
-      WHERE MONTH(date) = MONTH(CURDATE())
-      AND YEAR(date) = YEAR(CURDATE())
+      WHERE EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
+      AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)
       GROUP BY categorie
     `);
 
-    connection.release();
-    res.json(stats || []);
+    res.json(rows || []);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -318,35 +288,28 @@ app.get('/api/stats/by-category', async (req, res) => {
 // ✅ GET - Timeline par mois (pour graphique)
 app.get('/api/stats/timeline', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-
-    const [stats] = await connection.query(`
+    const { rows } = await pool.query(`
       SELECT 
-        DATE_FORMAT(date, '%Y-%m') as mois,
+        TO_CHAR(date, 'YYYY-MM') as mois,
         SUM(montant_final) as montant
       FROM shootings
-      GROUP BY DATE_FORMAT(date, '%Y-%m')
+      GROUP BY TO_CHAR(date, 'YYYY-MM')
       ORDER BY mois ASC
     `);
 
-    connection.release();
-    res.json(stats || []);
+    res.json(rows || []);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-
-
 // ==================== ROUTES PAIEMENTS ====================
 
 // ✅ GET - Tous les paiements
 app.get('/api/payments', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-
-    const [payments] = await connection.query(`
+    const { rows: payments } = await pool.query(`
       SELECT 
         p.id,
         p.date_paiement,
@@ -361,14 +324,13 @@ app.get('/api/payments', async (req, res) => {
 
     // Pour chaque paiement, récupère les shootings associés
     for (let payment of payments) {
-      const [shootings] = await connection.query(
-        'SELECT s.* FROM shootings s JOIN shooting_payments sp ON s.id = sp.shooting_id WHERE sp.payment_id = ?',
+      const { rows: shootings } = await pool.query(
+        'SELECT s.* FROM shootings s JOIN shooting_payments sp ON s.id = sp.shooting_id WHERE sp.payment_id = $1',
         [payment.id]
       );
       payment.shootings = shootings;
     }
 
-    connection.release();
     res.json(payments);
   } catch (error) {
     console.error(error);
@@ -385,38 +347,34 @@ app.post('/api/payments', async (req, res) => {
   }
 
   try {
-    const connection = await pool.getConnection();
-
     // Calculer le montant total des shootings
-    const [shootings] = await connection.query(
-      'SELECT SUM(montant_final) as total FROM shootings WHERE id IN (?)',
+    const { rows: shootings } = await pool.query(
+      'SELECT SUM(montant_final) as total FROM shootings WHERE id = ANY($1::int[])',
       [shooting_ids]
     );
 
     const montant = shootings[0].total || 0;
 
     // Créer le paiement
-    const [paymentResult] = await connection.query(
-      'INSERT INTO payments (date_paiement, montant) VALUES (?, ?)',
+    const paymentResult = await pool.query(
+      'INSERT INTO payments (date_paiement, montant) VALUES ($1, $2) RETURNING id',
       [date_paiement, montant]
     );
 
-    const payment_id = paymentResult.insertId;
+    const payment_id = paymentResult.rows[0].id;
 
     // Associer les shootings au paiement
     for (let shooting_id of shooting_ids) {
-      await connection.query(
-        'INSERT INTO shooting_payments (shooting_id, payment_id) VALUES (?, ?)',
+      await pool.query(
+        'INSERT INTO shooting_payments (shooting_id, payment_id) VALUES ($1, $2)',
         [shooting_id, payment_id]
       );
       // Marquer le shooting comme payé
-      await connection.query(
-        'UPDATE shootings SET paye = true WHERE id = ?',
+      await pool.query(
+        'UPDATE shootings SET paye = true WHERE id = $1',
         [shooting_id]
       );
     }
-
-    connection.release();
 
     res.status(201).json({
       id: payment_id,
@@ -434,26 +392,23 @@ app.post('/api/payments', async (req, res) => {
 // ✅ DELETE - Supprimer un paiement
 app.delete('/api/payments/:id', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-
     // Récupérer les shootings avant suppression
-    const [shootings] = await connection.query(
-      'SELECT shooting_id FROM shooting_payments WHERE payment_id = ?',
+    const { rows: shootings } = await pool.query(
+      'SELECT shooting_id FROM shooting_payments WHERE payment_id = $1',
       [req.params.id]
     );
 
     // Supprimer le paiement (cascade supprime shooting_payments)
-    await connection.query('DELETE FROM payments WHERE id = ?', [req.params.id]);
+    await pool.query('DELETE FROM payments WHERE id = $1', [req.params.id]);
 
     // Marquer les shootings comme impayés
     for (let row of shootings) {
-      await connection.query(
-        'UPDATE shootings SET paye = false WHERE id = ?',
+      await pool.query(
+        'UPDATE shootings SET paye = false WHERE id = $1',
         [row.shooting_id]
       );
     }
 
-    connection.release();
     res.json({ message: 'Paiement supprimé' });
   } catch (error) {
     console.error(error);
@@ -464,20 +419,17 @@ app.delete('/api/payments/:id', async (req, res) => {
 // ✅ GET - Timeline des paiements par mois
 app.get('/api/stats/payments-timeline', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-
-    const [stats] = await connection.query(`
+    const { rows } = await pool.query(`
       SELECT 
-        DATE_FORMAT(date_paiement, '%Y-%m') as mois,
+        TO_CHAR(date_paiement, 'YYYY-MM') as mois,
         SUM(montant) as montant,
         COUNT(*) as nombre_paiements
       FROM payments
-      GROUP BY DATE_FORMAT(date_paiement, '%Y-%m')
+      GROUP BY TO_CHAR(date_paiement, 'YYYY-MM')
       ORDER BY mois ASC
     `);
 
-    connection.release();
-    res.json(stats || []);
+    res.json(rows || []);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -487,11 +439,9 @@ app.get('/api/stats/payments-timeline', async (req, res) => {
 // ✅ GET - Shootings impayés (pour le formulaire de paiement)
 app.get('/api/shootings/unpaid', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    const [shootings] = await connection.query(
+    const { rows: shootings } = await pool.query(
       'SELECT * FROM shootings WHERE paye = false ORDER BY date DESC'
     );
-    connection.release();
     res.json(shootings);
   } catch (error) {
     console.error(error);
@@ -499,19 +449,12 @@ app.get('/api/shootings/unpaid', async (req, res) => {
   }
 });
 
-
-
-
-
-
-
-
 // ==================== HEALTH CHECK ====================
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK' });
 });
 
 // ==================== START SERVER ====================
-app.listen(process.env.PORT, () => {
-  console.log(`🚀 Serveur lancé sur http://localhost:${process.env.PORT}`);
+app.listen(PORT, () => {
+  console.log(`🚀 Serveur lancé sur `);
 });
