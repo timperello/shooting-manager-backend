@@ -18,17 +18,19 @@ app.use(cors({
 app.use(express.json());
 
 // Pool de connexion PostgreSQL (Supabase)
-const connectionString = 
-  process.env.POSTGRES_URL
+let connectionString = process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || process.env.DATABASE_URL;
 
 if (!connectionString) {
   console.error("❌ ERREUR: Aucune variable d'environnement de connexion PostgreSQL trouvée !");
+} else {
+  // Supprime sslmode=require de l'URL pour éviter le conflit avec rejectUnauthorized
+  connectionString = connectionString.replace('sslmode=require', 'sslmode=no-verify');
 }
 
 const pool = new Pool({
   connectionString: connectionString,
   ssl: {
-    rejectUnauthorized: false // Requis par Supabase en production
+    rejectUnauthorized: false
   }
 });
 
