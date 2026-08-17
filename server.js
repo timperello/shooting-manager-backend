@@ -8,7 +8,13 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+// Remplacez app.use(cors()); par :
+app.use(cors({
+  origin: [ 
+    'https://shooting-manager-frontend-txze-alpha.vercel.app/' 
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
 // Pool de connexion PostgreSQL (Supabase)
@@ -458,3 +464,4 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Serveur lancé sur `);
 });
+
