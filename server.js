@@ -464,7 +464,6 @@ app.get('/api/shootings/unpaid', async (req, res) => {
   }
 });
 
-
 const path = require('path');
 const sharp = require('sharp');
 
@@ -472,55 +471,32 @@ const sharp = require('sharp');
 app.get('/api/wallpaper/current-month', async (req, res) => {
   try {
 
-    // 📊 Montant généré ce mois = payés + impayés
-    const { data: generatedData, error: generatedError } = await supabase
-      .from('shootings')
-      .select('montant_final')
-      .gte(
-        'date',
-        new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
-      )
-      .lt(
-        'date',
-        new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString()
-      );
+    // 💰 Montant généré ce mois = payés + impayés
+    const { rows: generatedMonth } = await pool.query(`
+      SELECT COALESCE(SUM(montant_final), 0) AS montant
+      FROM shootings
+      WHERE EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
+      AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)
+    `);
 
-    if (generatedError) {
-      throw generatedError;
-    }
+    // 💸 Montant impayé TOTAL = tous les mois
+    const { rows: unpaidTotal } = await pool.query(`
+      SELECT COALESCE(SUM(montant_final), 0) AS montant
+      FROM shootings
+      WHERE paye = false
+    `);
 
-    const montantGenere = generatedData.reduce(
-      (total, shooting) => total + Number(shooting.montant_final || 0),
-      0
-    );
+    const montantGenere = Number(generatedMonth[0].montant);
+    const montantImpaye = Number(unpaidTotal[0].montant);
 
-
-    // 💰 Montant impayé total
-    const { data: unpaidData, error: unpaidError } = await supabase
-      .from('shootings')
-      .select('montant_final')
-      .eq('paye', false);
-
-    if (unpaidError) {
-      throw unpaidError;
-    }
-
-    const montantImpaye = unpaidData.reduce(
-      (total, shooting) => total + Number(shooting.montant_final || 0),
-      0
-    );
-
-
-    // 💴 Format ₩
+    // Format ₩
     const formatMoney = (amount) =>
       new Intl.NumberFormat('ko-KR').format(amount) + '₩';
-
 
     /*
      * 🖼️ Image de base
      */
     const wallpaperPath = path.join(__dirname, 'wallpaper.jpeg');
-
 
     /*
      * 📐 Récupère les dimensions exactes du wallpaper
@@ -529,7 +505,6 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
 
     const width = metadata.width;
     const height = metadata.height;
-
 
     /*
      * 📍 Position du texte
@@ -547,9 +522,8 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
 
     const x = width - rightMargin;
 
-
     /*
-     * 🌑 Soft drop shadow
+     * ✨ SVG avec texte + soft drop shadow
      */
     const svg = `
       <svg
@@ -584,7 +558,7 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
           filter="url(#softShadow)"
         >
 
-          <!-- GENERATED -->
+          <!-- GENERATED THIS MONTH -->
           <text
             x="${x}"
             y="${height - bottomMargin - lineHeight * 2 - blockGap}"
@@ -604,7 +578,6 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
           >
             GENERATED THIS MONTH
           </text>
-
 
           <!-- UNPAID -->
           <text
@@ -631,7 +604,6 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
       </svg>
     `;
 
-
     /*
      * 🖼️ Wallpaper + texte
      */
@@ -646,12 +618,9 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
       .png()
       .toBuffer();
 
-
-    /*
-     * 📤 Envoie le PNG
-     */
     res.set('Content-Type', 'image/png');
     res.set('Cache-Control', 'no-store');
+
     res.send(image);
 
   } catch (error) {
