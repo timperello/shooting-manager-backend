@@ -464,6 +464,189 @@ app.get('/api/shootings/unpaid', async (req, res) => {
   }
 });
 
+
+
+const path = require('path');
+const sharp = require('sharp');
+
+// 🖼️ GET - Wallpaper avec stats du mois
+app.get('/api/wallpaper/current-month', async (req, res) => {
+  let connection;
+
+  try {
+    connection = await pool.getConnection();
+
+    // Montant généré ce mois = payés + impayés
+    const [generatedMonth] = await connection.query(`
+      SELECT COALESCE(SUM(montant_final), 0) AS montant
+      FROM shootings
+      WHERE MONTH(date) = MONTH(CURDATE())
+      AND YEAR(date) = YEAR(CURDATE())
+    `);
+
+    // Montant impayé total
+    const [unpaidTotal] = await connection.query(`
+      SELECT COALESCE(SUM(montant_final), 0) AS montant
+      FROM shootings
+      WHERE paye = false
+    `);
+
+    connection.release();
+    connection = null;
+
+    const montantGenere = Number(generatedMonth[0].montant);
+    const montantImpaye = Number(unpaidTotal[0].montant);
+
+    // Format ₩
+    const formatMoney = (amount) =>
+      new Intl.NumberFormat('ko-KR').format(amount) + '₩';
+
+    /*
+     * Image de base
+     */
+    const wallpaperPath = path.join(__dirname, 'wallpaper.jpeg');
+
+    /*
+     * Récupère les dimensions exactes du wallpaper
+     */
+    const metadata = await sharp(wallpaperPath).metadata();
+
+    const width = metadata.width;
+    const height = metadata.height;
+
+    /*
+     * Position du texte
+     *
+     * On place le bloc en bas à droite.
+     */
+    const rightMargin = Math.round(width * 0.055);
+    const bottomMargin = Math.round(height * 0.045);
+
+    const fontSize = Math.round(width * 0.032);
+    const labelSize = Math.round(width * 0.014);
+
+    const lineHeight = Math.round(fontSize * 1.35);
+    const labelGap = Math.round(fontSize * 0.18);
+    const blockGap = Math.round(fontSize * 0.65);
+
+    const x = width - rightMargin;
+
+    /*
+     * On utilise un filtre SVG pour créer
+     * une soft drop shadow derrière le texte.
+     */
+    const svg = `
+      <svg
+        width="${width}"
+        height="${height}"
+        viewBox="0 0 ${width} ${height}"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+
+        <defs>
+          <filter
+            id="softShadow"
+            x="-50%"
+            y="-50%"
+            width="200%"
+            height="200%"
+          >
+            <feDropShadow
+              dx="0"
+              dy="3"
+              stdDeviation="6"
+              flood-color="#000000"
+              flood-opacity="0.45"
+            />
+          </filter>
+        </defs>
+
+        <g
+          text-anchor="end"
+          font-family="Arial, Helvetica, sans-serif"
+          fill="white"
+          filter="url(#softShadow)"
+        >
+
+          <!-- GENERATED -->
+          <text
+            x="${x}"
+            y="${height - bottomMargin - lineHeight * 2 - blockGap}"
+            font-size="${fontSize}"
+            font-weight="600"
+          >
+            ${formatMoney(montantGenere)}
+          </text>
+
+          <text
+            x="${x}"
+            y="${height - bottomMargin - lineHeight - blockGap + labelGap}"
+            font-size="${labelSize}"
+            font-weight="400"
+            letter-spacing="1"
+            opacity="0.9"
+          >
+            GENERATED THIS MONTH
+          </text>
+
+          <!-- UNPAID -->
+          <text
+            x="${x}"
+            y="${height - bottomMargin - lineHeight}"
+            font-size="${fontSize}"
+            font-weight="600"
+          >
+            ${formatMoney(montantImpaye)}
+          </text>
+
+          <text
+            x="${x}"
+            y="${height - bottomMargin + labelGap}"
+            font-size="${labelSize}"
+            font-weight="400"
+            letter-spacing="1"
+            opacity="0.9"
+          >
+            UNPAID
+          </text>
+
+        </g>
+      </svg>
+    `;
+
+    /*
+     * Wallpaper + texte
+     */
+    const image = await sharp(wallpaperPath)
+      .composite([
+        {
+          input: Buffer.from(svg),
+          top: 0,
+          left: 0
+        }
+      ])
+      .png()
+      .toBuffer();
+
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-store');
+    res.send(image);
+
+  } catch (error) {
+
+    if (connection) {
+      connection.release();
+    }
+
+    console.error('Wallpaper generation error:', error);
+
+    res.status(500).json({
+      error: 'Impossible de générer le wallpaper'
+    });
+  }
+});
+
+
 // ==================== HEALTH CHECK ====================
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK' });
