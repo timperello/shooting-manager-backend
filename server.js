@@ -568,17 +568,6 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
             ${formatMoney(montantGenere)}
           </text>
 
-          <text
-            x="${x}"
-            y="${height - bottomMargin - lineHeight - blockGap + labelGap}"
-            font-size="${labelSize}"
-            font-weight="400"
-            letter-spacing="1"
-            opacity="0.9"
-          >
-            GENERATED THIS MONTH
-          </text>
-
           <!-- UNPAID -->
           <text
             x="${x}"
@@ -587,17 +576,6 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
             font-weight="600"
           >
             ${formatMoney(montantImpaye)}
-          </text>
-
-          <text
-            x="${x}"
-            y="${height - bottomMargin + labelGap}"
-            font-size="${labelSize}"
-            font-weight="400"
-            letter-spacing="1"
-            opacity="0.9"
-          >
-            UNPAID
           </text>
 
         </g>
