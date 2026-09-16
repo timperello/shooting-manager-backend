@@ -511,12 +511,12 @@ app.get('/api/wallpaper/current-month', async (req, res) => {
      * En bas à droite
      */
     const rightMargin = Math.round(width * 0.055);
-    const bottomMargin = Math.round(height * 0.045);
+    const bottomMargin = Math.round(height * 0.13);
 
     const fontSize = Math.round(width * 0.032);
     const labelSize = Math.round(width * 0.014);
 
-    const lineHeight = Math.round(fontSize * 1.35);
+    const lineHeight = Math.round(fontSize * 0.9);
     const labelGap = Math.round(fontSize * 0.18);
     const blockGap = Math.round(fontSize * 0.65);
 
