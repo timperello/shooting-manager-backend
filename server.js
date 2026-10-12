@@ -51,6 +51,10 @@ app.get('/api/shootings', async (req, res) => {
         s.notes,
         s.paye,
         s.type_id,
+        s.brand_name,
+        s.project_name,
+        s.role,
+        s.location,
         t.nom as type_nom,
         t.couleur as type_couleur
       FROM shootings s
@@ -120,7 +124,7 @@ app.get('/api/shootings/:id', async (req, res) => {
 
 // ✅ POST - Créer un nouveau shooting
 app.post('/api/shootings', async (req, res) => {
-  const { nom, date, montant, categorie, pourcentage_agence, type_id, notes } = req.body;
+  const { nom, date, montant, categorie, pourcentage_agence, type_id, notes, brand_name, project_name, role, location } = req.body;
 
   if (!nom || !date || !montant || !type_id) {
     return res.status(400).json({ error: 'Champs obligatoires manquants' });
@@ -138,26 +142,18 @@ app.post('/api/shootings', async (req, res) => {
     }
 
     const insertResult = await pool.query(
-      'INSERT INTO shootings (nom, date, montant, categorie, pourcentage_agence, montant_final, type_id, notes, paye) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false) RETURNING id',
-      [nom, date, montant, categorie || 'agence', pct, montant_final, type_id, notes || '']
+      `INSERT INTO shootings (nom, date, montant, categorie, pourcentage_agence, montant_final, type_id, notes, paye, brand_name, project_name, role, location) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, $10, $11, $12) RETURNING id`,
+      [nom, date, montant, categorie || 'agence', pct, montant_final, type_id, notes || '', brand_name || null, project_name || null, role || null, location || null]
     );
     
     const newId = insertResult.rows[0].id;
 
     const { rows: newShooting } = await pool.query(`
       SELECT 
-        s.id,
-        s.nom,
-        s.date,
-        s.montant,
-        s.montant_final,
-        s.categorie,
-        s.pourcentage_agence,
-        s.notes,
-        s.paye,
-        s.type_id,
-        t.nom as type_nom,
-        t.couleur as type_couleur
+        s.id, s.nom, s.date, s.montant, s.montant_final, s.categorie, s.pourcentage_agence, 
+        s.notes, s.paye, s.type_id, s.brand_name, s.project_name, s.role, s.location,
+        t.nom as type_nom, t.couleur as type_couleur
       FROM shootings s
       LEFT JOIN shooting_types t ON s.type_id = t.id
       WHERE s.id = $1
@@ -172,7 +168,7 @@ app.post('/api/shootings', async (req, res) => {
 
 // ✅ PUT - Mettre à jour un shooting
 app.put('/api/shootings/:id', async (req, res) => {
-  const { nom, date, montant, categorie, pourcentage_agence, type_id, notes, paye } = req.body;
+  const { nom, date, montant, categorie, pourcentage_agence, type_id, notes, paye, brand_name, project_name, role, location } = req.body;
 
   try {
     const TAX_RATE = 0.967;
@@ -186,8 +182,12 @@ app.put('/api/shootings/:id', async (req, res) => {
     }
 
     await pool.query(
-      'UPDATE shootings SET nom = $1, date = $2, montant = $3, categorie = $4, pourcentage_agence = $5, montant_final = $6, type_id = $7, notes = $8, paye = $9 WHERE id = $10',
-      [nom, date, montant, categorie, pct, montant_final, type_id, notes || '', paye || false, req.params.id]
+      `UPDATE shootings 
+       SET nom = $1, date = $2, montant = $3, categorie = $4, pourcentage_agence = $5, 
+           montant_final = $6, type_id = $7, notes = $8, paye = $9, 
+           brand_name = $10, project_name = $11, role = $12, location = $13 
+       WHERE id = $14`,
+      [nom, date, montant, categorie, pct, montant_final, type_id, notes || '', paye || false, brand_name || null, project_name || null, role || null, location || null, req.params.id]
     );
     
     const { rows: updatedShooting } = await pool.query(`
@@ -202,6 +202,10 @@ app.put('/api/shootings/:id', async (req, res) => {
         s.notes,
         s.paye,
         s.type_id,
+        s.brand_name,
+        s.project_name,
+        s.role,
+        s.location,
         t.nom as type_nom,
         t.couleur as type_couleur
       FROM shootings s
